@@ -12,6 +12,7 @@ def ExtractPropertiesToSQLite():
     })
     ifcpatch.write(output, outputfile)
     print("将IFC文件导出为sqllite文件成功！")
+    print("导出路径为：", outputfile)    
 
 
 ExtractPropertiesToSQLite()
