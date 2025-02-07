@@ -1,0 +1,31 @@
+import pandas as pd
+from docx import Document
+
+# 读取Excel文件
+excel_file = r'D:\表B.4.30.xlsx'
+word_file = r'D:\表B.4.30 merged_sheets.docx'
+xls = pd.ExcelFile(excel_file)
+
+# 创建一个新的Word文档
+doc = Document()
+
+# 遍历Excel文件中的每个sheet
+for sheet_name in xls.sheet_names:
+    df = pd.read_excel(excel_file, sheet_name=sheet_name)
+    
+    # 添加sheet名称作为标题
+    doc.add_heading(sheet_name, level=1)
+    
+    # 添加表格
+    table = doc.add_table(rows=1, cols=len(df.columns))
+    hdr_cells = table.rows[0].cells
+    for i, column in enumerate(df.columns):
+        hdr_cells[i].text = column
+    
+    for index, row in df.iterrows():
+        row_cells = table.add_row().cells
+        for i, value in enumerate(row):
+            row_cells[i].text = str(value)
+
+# 保存Word文档
+doc.save(word_file)
