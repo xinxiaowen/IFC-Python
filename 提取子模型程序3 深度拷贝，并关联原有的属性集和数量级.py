@@ -1,7 +1,9 @@
+import datetime
 import ifcopenshell
 import ifcopenshell.api
 import ifcopenshell.util.element
 import sys
+import ifcopenshell.util.date
 
 # 输入的IFC文件路径
 input_ifc_path = 'SampleHouse.ifc'
@@ -21,6 +23,77 @@ if original_ifc.schema.upper() not in supported_versions:
 
 # 创建新的IFC文件
 submodel_ifc = ifcopenshell.file(schema=original_ifc.schema)
+
+# # === 新增：明确创建用户历史信息 ===
+# schema = original_ifc.schema.upper()
+
+# # 根据版本创建person实体
+# if schema in ['IFC4', 'IFC4X3']:
+#     person = submodel_ifc.create_entity(
+#         "IfcPerson",
+#         Identification="Ctesi",
+#         FamilyName="WX",
+#         GivenName="Default"
+#     )
+# elif schema in ['IFC2X3', 'IFC2X3TC1']:
+#     person = submodel_ifc.create_entity(
+#         "IfcPerson",
+#         FamilyName="WX",
+#         GivenName="Default",
+#         MiddleNames=None,
+#         PrefixTitles=None,
+#         SuffixTitles=None,
+#         Roles=None,
+#         Addresses=None
+#     )
+# else:
+#     raise Exception(f"不支持的IFC版本: {schema}")
+
+# # 根据版本创建organization实体
+# organization = submodel_ifc.create_entity(
+#     "IfcOrganization",
+#     Name="Ctesi"
+# )
+
+# # 创建PersonAndOrganization实例（各版本通用）
+# person_and_organization = submodel_ifc.create_entity(
+#     "IfcPersonAndOrganization",
+#     ThePerson=person,
+#     TheOrganization=organization
+# )
+
+# # 根据版本创建Application实体
+# if schema in ['IFC4', 'IFC4X3']:
+#     application = submodel_ifc.create_entity(
+#         "IfcApplication",
+#         ApplicationDeveloper=organization,
+#         Version="1.0",
+#         ApplicationFullName="IFC Extractor",
+#         ApplicationIdentifier="IFCExtract"
+#     )
+# elif schema in ['IFC2X3', 'IFC2X3TC1']:
+#     application = submodel_ifc.create_entity(
+#         "IfcApplication",
+#         ApplicationDeveloper=organization,
+#         Version="1.0",
+#         ApplicationFullName="IFC Extractor",
+#         ApplicationIdentifier="IFCExtract"
+#     )
+
+# # 最终创建OwnerHistory实体（通用）
+# owner_history = submodel_ifc.create_entity(
+#     "IfcOwnerHistory",
+#     OwningUser=person_and_organization,
+#     OwningApplication=application,
+#     State=None,
+#     ChangeAction="ADDED",
+#     LastModifiedDate=None,
+#     LastModifyingUser=None,
+#     LastModifyingApplication=None,
+#     CreationDate=int(datetime.datetime.now().timestamp())
+# )
+
+# 创建IFC项目和上下文（通用）
 project = ifcopenshell.api.run("root.create_entity", submodel_ifc, ifc_class="IfcProject", name="Extracted Submodel")
 # 创建IFC项目和上下文
 context = ifcopenshell.api.run("context.add_context", submodel_ifc, context_type="Model")
@@ -52,7 +125,7 @@ def copy_and_track(entity):
             submodel_ifc.create_entity(
                 'IfcRelDefinesByProperties',
                 GlobalId=ifcopenshell.guid.new(),
-                OwnerHistory=definition.OwnerHistory,
+                OwnerHistory=project.OwnerHistory,
                 Name=definition.Name,
                 Description=definition.Description,
                 RelatedObjects=[copied_entity],
@@ -68,7 +141,7 @@ def copy_and_track(entity):
             submodel_ifc.create_entity(
                 'IfcRelDefinesByType',
                 GlobalId=ifcopenshell.guid.new(),
-                OwnerHistory=definition.OwnerHistory,
+                OwnerHistory=project.OwnerHistory,
                 Name=definition.Name,
                 Description=definition.Description,
                 RelatedObjects=[copied_entity],
