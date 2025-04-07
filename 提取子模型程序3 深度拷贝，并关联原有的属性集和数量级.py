@@ -2,11 +2,12 @@ import datetime
 import ifcopenshell
 import ifcopenshell.api
 import ifcopenshell.util.element
+import ifcopenshell.util.selector
 import sys
 import ifcopenshell.util.date
 
 # 输入的IFC文件路径
-input_ifc_path = 'SampleHouse.ifc'
+input_ifc_path = '20201208DigitalHub_ARC.ifc'
 # 输出的IFC子模型文件路径
 output_ifc_path = 'output_submodel.ifc'
 
@@ -97,8 +98,12 @@ submodel_ifc = ifcopenshell.file(schema=original_ifc.schema)
 project = ifcopenshell.api.run("root.create_entity", submodel_ifc, ifc_class="IfcProject", name="Extracted Submodel")
 # 创建IFC项目和上下文
 context = ifcopenshell.api.run("context.add_context", submodel_ifc, context_type="Model")
-ifcopenshell.api.run("unit.assign_unit", submodel_ifc)
 
+# 继承原始模型的单位体系
+original_units = original_ifc.by_type('IfcUnitAssignment')[0]
+submodel_ifc.create_entity('IfcUnitAssignment', Units=original_units.Units)
+
+        
 # 映射字典
 copied_elements = {}
 element_info = {}
@@ -189,6 +194,21 @@ def copy_and_track(entity):
 
     return copied_entity
 
+# 完整复制材质、颜色和贴图
+for item in original_ifc.by_type('IfcStyledItem') + original_ifc.by_type('IfcSurfaceStyle'):
+    submodel_ifc.add(item)
+
+for relation in original_ifc.by_type('IfcRelAssociatesMaterial'):
+    copied_material = ifcopenshell.util.element.copy_deep(submodel_ifc, relation.RelatingMaterial)
+    related_objects_copied = [copied_elements[obj.GlobalId] for obj in relation.RelatedObjects if obj.GlobalId in copied_elements]
+    if related_objects_copied:
+        submodel_ifc.create_entity(
+            'IfcRelAssociatesMaterial',
+            GlobalId=ifcopenshell.guid.new(),
+            OwnerHistory=project.OwnerHistory,
+            RelatedObjects=related_objects_copied,
+            RelatingMaterial=copied_material
+        )
 
 # 复制空间结构（Site, Building, Storey）
 original_site = original_ifc.by_type('IfcSite')[0]
@@ -203,23 +223,80 @@ ifcopenshell.api.run("aggregate.assign_object", submodel_ifc, relating_object=pr
 ifcopenshell.api.run("aggregate.assign_object", submodel_ifc, relating_object=copied_site, products=[copied_building])
 ifcopenshell.api.run("aggregate.assign_object", submodel_ifc, relating_object=copied_building, products=copied_storeys)
 
-# 提取所有的IfcWall和IfcDoor构件
-for entity_type in ['IfcWall', 'IfcDoor', 'IfcWindow', 'IfcSlab', 'IfcRoof', 'IfcStair', 'IfcRamp']:
-    elements = original_ifc.by_type(entity_type)
-    for element in elements:
-        copied_element = copy_and_track(element)
+# Select all the walls and slabs in the file.
+elements = ifcopenshell.util.selector.filter_elements(original_ifc, "IfcWall, IfcSlab, IfcRoof, IfcStair, IfcRamp, IfcPlate, IfcMember, IfcWindow")
+for element in elements:
+    # 复制元素并跟踪其属性和数量级
+    copied_element = copy_and_track(element)
 
-        # 确保关联到正确的楼层
-        original_container = ifcopenshell.util.element.get_container(element)
-        if original_container:
-            copied_container = copied_elements.get(original_container.GlobalId)
-            if copied_container:
-                ifcopenshell.api.run(
-                    "spatial.assign_container",
-                    submodel_ifc,
-                    products=[copied_element],
-                    relating_structure=copied_container
-                )
+    # 确保关联到正确的楼层
+    original_container = ifcopenshell.util.element.get_container(element)
+    if original_container:
+        copied_container = copied_storeys[original_storeys.index(original_container)]
+        ifcopenshell.api.run(
+            "spatial.assign_container",
+            submodel_ifc,
+            products=[copied_element],
+            relating_structure=copied_container
+        )
+
+# # 提取所有的IfcWall和IfcDoor构件
+# for entity_type in ['IfcWall', 'IfcDoor', 'IfcWindow', 'IfcSlab', 'IfcRoof', 'IfcStair', 'IfcRamp']:
+#     elements = original_ifc.by_type(entity_type)
+#     for element in elements:
+#         copied_element = copy_and_track(element)
+
+#         # 确保关联到正确的楼层
+#         original_container = ifcopenshell.util.element.get_container(element)
+#         if original_container:
+#             copied_container = copied_elements.get(original_container.GlobalId)
+#             if copied_container:
+#                 ifcopenshell.api.run(
+#                     "spatial.assign_container",
+#                     submodel_ifc,
+#                     products=[copied_element],
+#                     relating_structure=copied_container
+#                 )
+
+# 完整复制IfcOpeningElement（挖孔）及其关系
+for opening_relation in original_ifc.by_type('IfcRelVoidsElement'):
+    original_wall = opening_relation.RelatingBuildingElement
+    original_opening = opening_relation.RelatedOpeningElement
+
+    if original_wall.GlobalId in copied_elements:
+        copied_wall = copied_elements[original_wall.GlobalId]
+
+        # 复制IfcOpeningElement
+        copied_opening = ifcopenshell.util.element.copy_deep(submodel_ifc, original_opening)
+        copied_elements[original_opening.GlobalId] = copied_opening
+
+        # 建立新的挖孔关系（IfcRelVoidsElement）
+        submodel_ifc.create_entity(
+            'IfcRelVoidsElement',
+            GlobalId=ifcopenshell.guid.new(),
+            OwnerHistory=project.OwnerHistory,
+            RelatingBuildingElement=copied_wall,
+            RelatedOpeningElement=copied_opening
+        )
+
+# 完整复制IfcWindow与OpeningElement之间的填充关系（IfcRelFillsElement）
+for fills_relation in original_ifc.by_type('IfcRelFillsElement'):
+    original_opening = fills_relation.RelatingOpeningElement
+    original_element = fills_relation.RelatedBuildingElement
+
+    if original_opening.GlobalId in copied_elements and original_element.GlobalId in copied_elements:
+        copied_opening = copied_elements[original_opening.GlobalId]
+        copied_element = copied_elements[original_element.GlobalId]
+
+        # 建立新的填充关系（IfcRelFillsElement）
+        submodel_ifc.create_entity(
+            'IfcRelFillsElement',
+            GlobalId=ifcopenshell.guid.new(),
+            OwnerHistory=project.OwnerHistory,
+            RelatingOpeningElement=copied_opening,
+            RelatedBuildingElement=copied_element
+        )
+
 
 # 输出元素信息摘要
 print("复制元素类型、属性和数量信息：")
